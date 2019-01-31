@@ -36,6 +36,7 @@ enum OS_INFO_VARIABLE
     OS_INFO_VARIABLE_CompatibilityMode,
     OS_INFO_VARIABLE_TerminalServer,
     OS_INFO_VARIABLE_ProcessorArchitecture,
+    OS_INFO_VARIABLE_WindowsBuild,
 };
 
 enum SET_VARIABLE
@@ -44,6 +45,14 @@ enum SET_VARIABLE
     SET_VARIABLE_OVERRIDE_BUILTIN,
     SET_VARIABLE_OVERRIDE_PERSISTED_BUILTINS,
     SET_VARIABLE_ANY,
+};
+
+enum CBS_VERSION_PART
+{
+    CBS_VERSION_PART_MAJOR = 0,
+    CBS_VERSION_PART_MINOR = 1,
+    CBS_VERSION_PART_BUILD = 2,
+    CBS_VERSION_PART_REVISION = 3
 };
 
 // internal function declarations
@@ -95,6 +104,14 @@ static HRESULT InitializeVariableOsInfo(
     __inout BURN_VARIANT* pValue
     );
 static HRESULT InitializeVariableSystemInfo(
+    __in DWORD_PTR dwpData,
+    __inout BURN_VARIANT* pValue
+    );
+static HRESULT InitializeVariableCBSVersion(
+    __in DWORD_PTR dwpData,
+    __inout BURN_VARIANT* pValue
+    );
+static HRESULT InitializeVariableUnifiedBuildRevision(
     __in DWORD_PTR dwpData,
     __inout BURN_VARIANT* pValue
     );
@@ -197,6 +214,10 @@ extern "C" HRESULT VariableInitialize(
     const BUILT_IN_VARIABLE_DECLARATION vrgBuiltInVariables[] = {
         {L"AdminToolsFolder", InitializeVariableCsidlFolder, CSIDL_ADMINTOOLS},
         {L"AppDataFolder", InitializeVariableCsidlFolder, CSIDL_APPDATA},
+        {L"CBSVersionMajor", InitializeVariableCBSVersion, CBS_VERSION_PART_MAJOR},
+        {L"CBSVersionMinor", InitializeVariableCBSVersion, CBS_VERSION_PART_MINOR},
+        {L"CBSVersionBuild", InitializeVariableCBSVersion, CBS_VERSION_PART_BUILD},
+        {L"CBSVersionRevision", InitializeVariableCBSVersion, CBS_VERSION_PART_REVISION},
         {L"CommonAppDataFolder", InitializeVariableCsidlFolder, CSIDL_COMMON_APPDATA},
 #if defined(_WIN64)
         {L"CommonFiles64Folder", InitializeVariableCsidlFolder, CSIDL_PROGRAM_FILES_COMMON},
@@ -248,11 +269,13 @@ extern "C" HRESULT VariableInitialize(
         {L"TempFolder", InitializeVariableTempFolder, 0},
         {L"TemplateFolder", InitializeVariableCsidlFolder, CSIDL_TEMPLATES},
         {L"TerminalServer", InitializeVariableOsInfo, OS_INFO_VARIABLE_TerminalServer},
+        {L"UnifiedBuildRevision", InitializeVariableUnifiedBuildRevision, 0},
         {L"UserUILanguageID", InitializeUserUILanguageID, 0},
         {L"UserLanguageID", InitializeUserLanguageID, 0},
         {L"VersionMsi", InitializeVariableVersionMsi, 0},
         {L"VersionNT", InitializeVariableVersionNT, OS_INFO_VARIABLE_VersionNT},
         {L"VersionNT64", InitializeVariableVersionNT, OS_INFO_VARIABLE_VersionNT64},
+        {L"WindowsBuild", InitializeVariableVersionNT, OS_INFO_VARIABLE_WindowsBuild},
         {L"WindowsFolder", InitializeVariableCsidlFolder, CSIDL_WINDOWS},
         {L"WindowsVolume", InitializeVariableWindowsVolumeFolder, 0},
         {BURN_BUNDLE_ACTION, InitializeVariableNumeric, 0, FALSE, TRUE},
@@ -1671,6 +1694,13 @@ static HRESULT InitializeVariableVersionNT(
             }
         }
         break;
+    case OS_INFO_VARIABLE_WindowsBuild:
+        if (0 != ovix.dwBuildNumber)
+        {
+            value.qwValue = static_cast<DWORD64>(ovix.dwBuildNumber);
+            value.Type = BURN_VARIANT_TYPE_NUMERIC;
+        }
+        break;
     default:
         AssertSz(FALSE, "Unknown OS info type.");
         break;
@@ -1791,6 +1821,208 @@ static HRESULT InitializeVariableSystemInfo(
     ExitOnFailure(hr, "Failed to set variant value.");
 
 LExit:
+    return hr;
+}
+
+static HRESULT InitializeVariableCBSVersion(
+    __in DWORD_PTR dwpData,
+    __inout BURN_VARIANT* pValue
+    )
+{
+    HRESULT hr = S_OK;
+    BURN_VARIANT value = { };
+    HKEY hkCbsVer = NULL;
+    LPWSTR wzCbsVerValName = NULL;
+    BOOL fGotVer = FALSE;
+    DWORD dwaCbsVer[4] = { 0, 0, 0, 0 };
+
+    hr = RegOpen(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Component Based Servicing\\Version", KEY_READ | KEY_WOW64_64KEY, &hkCbsVer);
+    if ((E_FILENOTFOUND == hr) || (E_PATHNOTFOUND == hr) || (E_MODNOTFOUND == hr) || (E_NOTFOUND == hr))
+    {
+        goto NExit;
+    }
+    ExitOnFailure(hr, "Failed to open CBS version key.");
+
+    for (DWORD dwIndex = 0; ; dwIndex++)
+    {
+        ReleaseNullStr(wzCbsVerValName);
+        hr = RegValueEnum(hkCbsVer, dwIndex, &wzCbsVerValName, NULL);
+        if (hr == E_NOMOREITEMS)
+        {
+            break;
+        }
+        ExitOnFailure(hr, "Failed to enumerate CBS version values.");
+
+        DWORD cchVersion = lstrlenW(wzCbsVerValName);
+
+        // Skip "Default" value
+        if (0 >= cchVersion)
+        {
+            continue;
+        }
+
+        LPCWSTR wzVersion = wzCbsVerValName;
+        LPCWSTR wzPartBegin = wzVersion;
+        LPCWSTR wzPartEnd = wzVersion;
+        LPCWSTR wzEnd = wzVersion + cchVersion;
+        DWORD iPart = 0;
+        DWORD dwaValVer[4] = { 0, 0, 0, 0 };
+        BOOL fValNameIsVer = TRUE;
+
+        // loop through parts
+        for (;;)
+        {
+            if (4 <= iPart)
+            {
+                TraceErrorDebug(ERROR_INVALID_DATA, "Too many version parts in value name (CBS ver).");
+                fValNameIsVer = FALSE;
+                break;
+            }
+
+            // find end of part
+            while (wzPartEnd < wzEnd && L'.' != *wzPartEnd)
+            {
+                ++wzPartEnd;
+            }
+            if (wzPartBegin == wzPartEnd)
+            {
+                TraceErrorDebug(ERROR_INVALID_DATA, "Empty version part in value name (CBS ver).");
+                fValNameIsVer = FALSE;
+                break;
+            }
+
+            DWORD cchPart;
+            hr = ::PtrdiffTToDWord(wzPartEnd - wzPartBegin, &cchPart);
+            if (FAILED(hr))
+            {
+                TraceErrorDebug(ERROR_INVALID_DATA, "Problem with version part length in value name (CBS ver).");
+                fValNameIsVer = FALSE;
+                break;
+            }
+
+            // parse version part
+            UINT dwVerPart;
+            hr = StrStringToUInt32(wzPartBegin, cchPart, &dwVerPart);
+            if (FAILED(hr))
+            {
+                TraceErrorDebug(ERROR_INVALID_DATA, "Couldn't parse version part in value name (CBS ver).");
+                fValNameIsVer = FALSE;
+                break;
+            }
+
+            dwaValVer[iPart] = dwVerPart;
+
+            if (wzPartEnd >= wzEnd)
+            {
+                // end of string
+                break;
+            }
+
+            wzPartBegin = ++wzPartEnd; // skip over separator
+            ++iPart;
+        }
+
+        // skip to next value if we didn't get version numbers
+        if (!fValNameIsVer)
+        {
+            continue;
+        }
+
+        if (
+            (!fGotVer) ||
+            (dwaValVer[0] > dwaCbsVer[0]) || (
+                (dwaValVer[0] == dwaCbsVer[0]) && (
+                    (dwaValVer[1] > dwaCbsVer[1]) || (
+                        (dwaValVer[1] == dwaCbsVer[1]) && (
+                            (dwaValVer[2] > dwaCbsVer[2]) || (
+                                (dwaValVer[2] == dwaCbsVer[2]) && (
+                                    (dwaValVer[3] > dwaCbsVer[3])
+                                    )
+                                )
+                            )
+                        )
+                    )
+                )
+            )
+        {
+            dwaCbsVer[0] = dwaValVer[0];
+            dwaCbsVer[1] = dwaValVer[1];
+            dwaCbsVer[2] = dwaValVer[2];
+            dwaCbsVer[3] = dwaValVer[3];
+        }
+        fGotVer = TRUE;
+    }
+
+    // Don't set variables if we didn't get the version
+    if (!fGotVer)
+    {
+        TraceErrorDebug(ERROR_INVALID_DATA, "No version fetched (CBS ver).");
+        goto NExit;
+    }
+
+    CBS_VERSION_PART ePart = (CBS_VERSION_PART)dwpData;
+
+    switch (ePart)
+    {
+    case CBS_VERSION_PART_MAJOR:
+    case CBS_VERSION_PART_MINOR:
+    case CBS_VERSION_PART_BUILD:
+    case CBS_VERSION_PART_REVISION:
+        value.qwValue = static_cast<DWORD64>(dwaCbsVer[ePart]);
+        value.Type = BURN_VARIANT_TYPE_NUMERIC;
+        break;
+    default:
+        AssertSz(FALSE, "Unknown CBS version part.");
+        break;
+    }
+
+NExit:
+    hr = BVariantCopy(&value, pValue);
+    ExitOnFailure(hr, "Failed to set CBS version variant value.");
+
+LExit:
+    ReleaseNullStr(wzCbsVerValName);
+    ReleaseRegKey(hkCbsVer);
+
+    return hr;
+}
+
+static HRESULT InitializeVariableUnifiedBuildRevision(
+    __in DWORD_PTR dwpData,
+    __inout BURN_VARIANT* pValue
+    )
+{
+    UNREFERENCED_PARAMETER(dwpData);
+
+    HRESULT hr = S_OK;
+    HKEY hkNtCurVer = NULL;
+    DWORD dwUBR = 0;
+    BURN_VARIANT value = { };
+
+    hr = RegOpen(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", KEY_READ | KEY_WOW64_64KEY, &hkNtCurVer);
+    if ((E_FILENOTFOUND == hr) || (E_PATHNOTFOUND == hr) || (E_MODNOTFOUND == hr) || (E_NOTFOUND == hr))
+    {
+        goto NExit;
+    }
+    ExitOnFailure(hr, "Failed to open Windows NT key.");
+
+    hr = RegReadNumber(hkNtCurVer, L"UBR", &dwUBR);
+    if ((E_FILENOTFOUND == hr) || (E_PATHNOTFOUND == hr) || (E_MODNOTFOUND == hr) || (E_NOTFOUND == hr))
+    {
+        goto NExit;
+    }
+    ExitOnFailure(hr, "Failed to read registry value for UBR.");
+
+    hr = BVariantSetNumeric(pValue, dwUBR);
+    ExitOnFailure(hr, "Failed to set UBR variant value.");
+
+NExit:
+    hr = BVariantCopy(&value, pValue);
+    ExitOnFailure(hr, "Failed to set variant value.");
+
+LExit:
+    ReleaseRegKey(hkNtCurVer);
+
     return hr;
 }
 
