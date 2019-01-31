@@ -30,6 +30,10 @@ static HRESULT SplitIgnoredDependents(
     __deref_inout STRINGDICT_HANDLE* psdIgnoredDependents
     );
 
+static HRESULT SplitIgnoredDependencies(
+    __deref_inout STRINGDICT_HANDLE* psdIgnoredDependencies
+    );
+
 static HRESULT CreateDependencyRecord(
     __in int iMessageId,
     __in_ecount(cDependencies) const DEPENDENCY* rgDependencies,
@@ -120,6 +124,7 @@ static HRESULT EnsureRequiredDependencies(
     HRESULT hr = S_OK;
     DWORD er = ERROR_SUCCESS;
     STRINGDICT_HANDLE sdDependencies = NULL;
+    STRINGDICT_HANDLE sdIgnoredDependencies = NULL;
     HKEY hkHive = NULL;
     PMSIHANDLE hView = NULL;
     PMSIHANDLE hRec = NULL;
@@ -133,6 +138,25 @@ static HRESULT EnsureRequiredDependencies(
     DEPENDENCY* rgDependencies = NULL;
     UINT cDependencies = 0;
     PMSIHANDLE hDependencyRec = NULL;
+
+    // Split the IGNOREDEPENDENCIES property for use below if set. If it is "ALL", then quit now.
+    hr = SplitIgnoredDependencies(&sdIgnoredDependencies);
+    ExitOnFailure(hr, "Failed to get the ignored dependencies.");
+
+    hr = DictKeyExists(sdIgnoredDependencies, L"ALL");
+    if (E_NOTFOUND != hr)
+    {
+        ExitOnFailure(hr, "Failed to check if \"ALL\" was set in IGNOREDEPENDENCIES.");
+
+        // Otherwise...
+        WcaLog(LOGMSG_STANDARD, "Skipping the dependencies check since IGNOREDEPENDENCIES contains \"ALL\".");
+        ExitFunction();
+    }
+    else
+    {
+        // Key was not found, so proceed.
+        hr = S_OK;
+    }
 
     // Skip the dependency check if the WixDependency table is missing (no dependencies to check for).
     hr = WcaTableExists(L"WixDependency");
@@ -174,6 +198,14 @@ static HRESULT EnsureRequiredDependencies(
 
         hr = WcaGetRecordString(hRec, dqProviderKey, &sczProviderKey);
         ExitOnFailure(hr, "Failed to get WixDependency.ProviderKey.");
+
+        // If the key is ignored, skip to the next one
+        hr = DictKeyExists(sdIgnoredDependencies, sczProviderKey);
+        if (hr != E_NOTFOUND)
+        {
+            ExitOnFailure(hr, "Failed to check the dictionary of ignored dependencies.");
+            continue;
+        }
 
         hr = WcaGetRecordString(hRec, dqMinVersion, &sczMinVersion);
         ExitOnFailure(hr, "Failed to get WixDependency.MinVersion.");
@@ -248,6 +280,7 @@ LExit:
     ReleaseStr(sczMinVersion);
     ReleaseStr(sczMaxVersion);
     ReleaseDict(sdDependencies);
+    ReleaseDict(sdIgnoredDependencies);
 
     return hr;
 }
@@ -278,17 +311,17 @@ static HRESULT EnsureAbsentDependents(
     UINT cDependents = 0;
     PMSIHANDLE hDependencyRec = NULL;
 
-    // Split the IGNOREDEPENDENCIES property for use below if set. If it is "ALL", then quit now.
+    // Split the IGNOREDEPENDENTS property for use below if set. If it is "ALL", then quit now.
     hr = SplitIgnoredDependents(&sdIgnoredDependents);
     ExitOnFailure(hr, "Failed to get the ignored dependents.");
 
     hr = DictKeyExists(sdIgnoredDependents, L"ALL");
     if (E_NOTFOUND != hr)
     {
-        ExitOnFailure(hr, "Failed to check if \"ALL\" was set in IGNOREDEPENDENCIES.");
+        ExitOnFailure(hr, "Failed to check if \"ALL\" was set in IGNOREDEPENDENTS.");
 
         // Otherwise...
-        WcaLog(LOGMSG_STANDARD, "Skipping the dependencies check since IGNOREDEPENDENCIES contains \"ALL\".");
+        WcaLog(LOGMSG_STANDARD, "Skipping the dependencies check since IGNOREDEPENDENTS contains \"ALL\".");
         ExitFunction();
     }
     else
@@ -400,11 +433,43 @@ LExit:
 }
 
 /***************************************************************************
- SplitIgnoredDependents - Splits the IGNOREDEPENDENCIES property into a map.
+ SplitIgnoredDependents - Splits the IGNOREDEPENDENTS property into a map.
 
 ***************************************************************************/
 static HRESULT SplitIgnoredDependents(
     __deref_inout STRINGDICT_HANDLE* psdIgnoredDependents
+    )
+{
+    HRESULT hr = S_OK;
+    LPWSTR sczIgnoreDependents = NULL;
+    LPCWSTR wzDelim = L";";
+    LPWSTR wzContext = NULL;
+
+    hr = WcaGetProperty(L"IGNOREDEPENDENTS", &sczIgnoreDependents);
+    ExitOnFailure(hr, "Failed to get the string value of the IGNOREDEPENDENTS property.");
+
+    hr = DictCreateStringList(psdIgnoredDependents, INITIAL_STRINGDICT_SIZE, DICT_FLAG_CASEINSENSITIVE);
+    ExitOnFailure(hr, "Failed to create the string dictionary.");
+
+    // Parse through the semicolon-delimited tokens and add to the string dictionary.
+    for (LPCWSTR wzToken = ::wcstok_s(sczIgnoreDependents, wzDelim, &wzContext); wzToken; wzToken = ::wcstok_s(NULL, wzDelim, &wzContext))
+    {
+        hr = DictAddKey(*psdIgnoredDependents, wzToken);
+        ExitOnFailure(hr, "Failed to ignored dependency \"%ls\" to the string dictionary.", wzToken);
+    }
+
+LExit:
+    ReleaseStr(sczIgnoreDependents);
+
+    return hr;
+}
+
+/***************************************************************************
+ SplitIgnoredDependencies - Splits the IGNOREDEPENDENCIES property into a map.
+
+***************************************************************************/
+static HRESULT SplitIgnoredDependencies(
+    __deref_inout STRINGDICT_HANDLE* psdIgnoredDependencies
     )
 {
     HRESULT hr = S_OK;
@@ -415,13 +480,13 @@ static HRESULT SplitIgnoredDependents(
     hr = WcaGetProperty(L"IGNOREDEPENDENCIES", &sczIgnoreDependencies);
     ExitOnFailure(hr, "Failed to get the string value of the IGNOREDEPENDENCIES property.");
 
-    hr = DictCreateStringList(psdIgnoredDependents, INITIAL_STRINGDICT_SIZE, DICT_FLAG_CASEINSENSITIVE);
+    hr = DictCreateStringList(psdIgnoredDependencies, INITIAL_STRINGDICT_SIZE, DICT_FLAG_CASEINSENSITIVE);
     ExitOnFailure(hr, "Failed to create the string dictionary.");
 
     // Parse through the semicolon-delimited tokens and add to the string dictionary.
     for (LPCWSTR wzToken = ::wcstok_s(sczIgnoreDependencies, wzDelim, &wzContext); wzToken; wzToken = ::wcstok_s(NULL, wzDelim, &wzContext))
     {
-        hr = DictAddKey(*psdIgnoredDependents, wzToken);
+        hr = DictAddKey(*psdIgnoredDependencies, wzToken);
         ExitOnFailure(hr, "Failed to ignored dependency \"%ls\" to the string dictionary.", wzToken);
     }
 
