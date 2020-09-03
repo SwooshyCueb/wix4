@@ -2013,7 +2013,7 @@ static HRESULT InitializeVariableUnifiedBuildRevision(
     }
     ExitOnFailure(hr, "Failed to read registry value for UBR.");
 
-    hr = BVariantSetNumeric(pValue, dwUBR);
+    hr = BVariantSetNumeric(&value, dwUBR);
     ExitOnFailure(hr, "Failed to set UBR variant value.");
 
 NExit:
