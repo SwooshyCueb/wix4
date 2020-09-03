@@ -71,10 +71,11 @@
 
   <PropertyGroup>
     <PotentialPlatformSdkInstallPath>$([MSBuild]::GetRegistryValueFromView('HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows Kits\Installed Roots', 'KitsRoot10', null, RegistryView.Registry64, RegistryView.Registry32))</PotentialPlatformSdkInstallPath>
-    <PlatformSdkInstallPath Condition=" '$(PotentialPlatformSdkInstallPath)'!='' and Exists('$(PotentialPlatformSdkInstallPath)\include\10.0.14393.0\um') ">$(PotentialPlatformSdkInstallPath)</PlatformSdkInstallPath>
+    <PlatformSdkInstallPath Condition=" '$(PotentialPlatformSdkInstallPath)'!='' and Exists('$(PotentialPlatformSdkInstallPath)\include\10.0.17134.0\um') ">$(PotentialPlatformSdkInstallPath)</PlatformSdkInstallPath>
     <PlatformSdkRegistryVersion Condition=" '$(PlatformSdkInstallPath)'!='' ">v10</PlatformSdkRegistryVersion>
-    <PlatformSdkIncludeRoot Condition=" '$(PlatformSdkIncludeRoot)'=='' and '$(PlatformSdkInstallPath)'!='' ">$(PlatformSdkInstallPath)\include\10.0.14393.0</PlatformSdkIncludeRoot>
-    <PlatformSdkArmLibraryRoot Condition=" '$(PlatformSdkArmLibraryRoot)'=='' and '$(PlatformSdkInstallPath)'!='' ">$(PlatformSdkInstallPath)lib\10.0.14393.0\um\arm</PlatformSdkArmLibraryRoot>
+    <PlatformSdkIncludeRoot Condition=" '$(PlatformSdkIncludeRoot)'=='' and '$(PlatformSdkInstallPath)'!='' ">$(PlatformSdkInstallPath)\include\10.0.17134.0</PlatformSdkIncludeRoot>
+    <PlatformSdkArmLibraryRoot Condition=" '$(PlatformSdkArmLibraryRoot)'=='' and '$(PlatformSdkInstallPath)'!='' ">$(PlatformSdkInstallPath)lib\10.0.17134.0\um\arm</PlatformSdkArmLibraryRoot>
+    <WindowsTargetPlatformVersion Condition=" '$(WindowsTargetPlatformVersion)'=='' and '$(PlatformSdkInstallPath)'!='' ">10.0.17134.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
 
   <PropertyGroup Condition=" '$(PlatformSdkInstallPath)'=='' ">
