@@ -18,6 +18,7 @@
 #include <softpub.h>
 #include <strsafe.h>
 #include <intsafe.h>
+#include <intrin.h>
 #include <mscat.h>
 #include <lmcons.h>
 #include <wininet.h>
