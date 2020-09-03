@@ -215,6 +215,7 @@
     On the build machine the OFFICIAL_WIX_BUILD env var will point to the private key, otherwise
     use the public key in the enlistment.  We must find a key file.
   -->
+  <!--
   <PropertyGroup Condition=" '$(DisableSigning)' == 'true' ">
     <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)publickey_wix.snk</AssemblyOriginatorKeyFile>
 	<DelaySign>false</DelaySign>
@@ -231,6 +232,12 @@
     <DelaySign>false</DelaySign>
     <SignAssembly>true</SignAssembly>
     <BuildSandcastleDocumentation>true</BuildSandcastleDocumentation>
+  </PropertyGroup>
+  -->
+  <PropertyGroup>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)wix-ORS.snk</AssemblyOriginatorKeyFile>
+    <DelaySign>false</DelaySign>
+    <SignAssembly>true</SignAssembly>
   </PropertyGroup>
 
   <!-- StyleCop settings -->
